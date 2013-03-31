@@ -1,0 +1,135 @@
+#!/usr/bin/env python
+import sys
+import multiprocessing
+import random
+import datetime
+import time
+import sh
+import yaml
+from optparse import OptionParser
+from multiprocessing.queues import Queue, Empty
+from timeout import timeout, TimeoutException
+
+def get_current_ip(config):
+	results = eval(config['get_ip'])
+	for result in results:
+		if validate_ip(result):
+			return result.strip()
+
+def validate_ip(test_ip):
+	parts = test_ip.strip().split(".")
+	if len(parts) != 4:
+		return False
+	for part in parts:
+		try:
+			i = int(part)
+			if i < 0 or i > 255:
+				return False
+		except:
+			return False
+	return True
+
+def get_ip_list(config):
+	results = eval(config['ip_list'])
+	retval = []
+	for result in results:
+		if validate_ip(result):
+			retval.append(result.strip())
+	return retval
+
+@timeout(60)
+def run_tunnel(command, ip_address):
+	eval(command.replace("[IP_ADDRESS]", ip_address))
+
+def build_tunnel(queue, command, ip_address):
+	try:
+		print "Connecting to %s" % ip_address
+		run_tunnel(command, ip_address)
+	except TimeoutException:
+		print "VPN exiting"
+		queue.put(True)
+		return
+	queue.put(False)
+
+def run_rotation(config, connect):
+	print "Starting at: %s" % (datetime.datetime.now())
+	print "Current ip: %s" % config['data']['base_ip']
+	while True:
+		queue = Queue()
+		ip = select_ip(config)
+		start = time.time()
+		p = multiprocessing.Process(target=build_tunnel, args=(
+			queue, config['start_vpn'], ip))
+		p.start()
+		running = True
+		while running:
+			try:
+				exit = queue.get(timeout=connect)
+				if not exit:
+					while time.time() - start < run_tunnel.timeout:
+						time.sleep(1)
+				else:
+					time.sleep(3)
+					kill_vpn(config)
+					running = False
+			except Empty:
+				new_ip = get_current_ip(config)
+				if new_ip == config['data']['base_ip']:
+					print new_ip
+					config['data']['current_ip'] = new_ip
+				#	config['data']['bad_ips'].add(ip)
+				#	print "Connection failed (timeout).  Killing vpn"
+				#	p.terminate()
+				#	time.sleep(3)
+				#	kill_vpn(config)
+
+def kill_vpn(config):
+	eval(config['kill_vpn'])
+
+def rotate_my_shizzle(config, connect):
+	data = config.setdefault('data', {})
+	data['ips'] = set(get_ip_list(config))
+	data['base_ip'] = get_current_ip(config)
+	data['current_ip'] = data['base_ip']
+	data['bad_ips'] = set()
+	data['used_ips'] = set()
+	run_rotation(config, connect)
+
+def select_ip(config):
+	config['data']['ips'] = config['data']['ips'].difference(config['data']['bad_ips'])
+	leftlist = list(config['data']['ips'].difference(config['data']['used_ips']))
+	if len(leftlist) == 0:
+		config['data']['used_ips'] = set()
+		config['data']['ips'] = get_ip_list(config)
+		config['data']['ips'] = config['data']['ips'].difference(config['data']['bad_ips'])
+		leftlist = config['data']['ips']
+	return random.choice(leftlist)
+
+def main():
+	parser = option_parser()
+	(options, args) = parser.parse_args()
+	if not options.config:
+		sys.stderr.write("-c required\n")
+		sys.exit(1)
+	config = yaml.load(file(options.config))
+	run_tunnel.timeout = options.timeout
+	rotate_my_shizzle(config, options.connect)
+
+def option_parser():
+	usage = "usage: %prog [options] [CNAME]"
+	description = "Rotates your ip address based on config"
+	parser = OptionParser(usage=usage, description=description)
+	parser.add_option(
+		"-t", "--timeout", dest="timeout", type="int", default=60,
+		help="ip address timeout (Default 60)")
+	parser.add_option(
+		"-T", "--connect-timeout", dest="connect", type="int", default=10,
+		help="connect timeout (Default 60)")
+	parser.add_option(
+		"-c", "--config", dest="config",
+		help="config file (Required)")
+	return parser
+
+if (__name__ == "__main__"):
+	main()
+
