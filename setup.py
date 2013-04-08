@@ -3,7 +3,7 @@ from setuptools import find_packages, setup
 
 setup(
 	name="pirouette",
-	version="0.1.1",
+	version="0.9.0",
 	url = "https://github.com/devonjones/pirouette",
 	author="Devon Jones",
 	author_email="devon.jones@gmail.com",

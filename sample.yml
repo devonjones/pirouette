@@ -1,0 +1,4 @@
+get_ip: sh.sed(sh.grep(sh.curl("-s", "--head", "http://techlist.com/ip/"), "Location"), "s/^.*\///")
+start_vpn: sh.Command("/home/devon/Downloads/hma-vpn/hma-vpn.sh")("-p", "tcp", '[IP_ADDRESS]')
+kill_vpn: sh.killall("-9", "openvpn", _ok_code=[0,1])
+ip_list: sh.tail(sh.perl(sh.Command("/home/devon/Downloads/hma-vpn/hma-vpn.sh")("-l"), "-pe", "s/.*?(\d{1,3}(\.\d{1,3}){3}).*$/$1/"), "-n", "+3")

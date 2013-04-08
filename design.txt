@@ -1,0 +1,26 @@
+0 - log everything, connection attempts, fails, etc. just basically dump to a file everything that's echoed on stdout
+
+1 - take a argv for the number of seconds between rotations (default to 60)
+
+2 - take an argv for country name, default to USA and accept "all" for global
+
+3 - grab real ip before connecting (e.g., curl http://checkip.dyndns.com/)
+
+4 - echo start time, real ip and parameters to be used (locations to be used and rotation time)
+
+5 - then loop through....
+
+5a - echo "connecting to [location]..." (by the way, I don't think there's any benefit in doing a random selection from the list every time. better just to randomize the list once, then cycle through it forever. that maximizes the time between uses of the same ip pool.)
+
+5b - sleep 5 to allow connection to happen
+
+5c - check IP again, and echo if good (not real ip). do this every 15 seconds.
+
+5d - if IP is bad (unproxied, or no connection at all [--connect-timeout 5 on curl, I suppose]), kill connection attempt (killall openvpn - might need sudo) and echo "failed to connect to [location]". mark the location as bad so we don't try it again.
+
+5e - when time to switch, echo "killing connection..." and issue killall openvpn. If there is no connection the error "openvpn: no process found" will come back, so capture that if possible for debugging. 
+
+5f - sleep 5 to allow connection to drop (or use ip check to confirm)
+
+5f - goto 5a
+
