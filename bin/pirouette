@@ -4,6 +4,7 @@ import multiprocessing
 import random
 import datetime
 import time
+import logging
 import sh
 import yaml
 from optparse import OptionParser
@@ -19,7 +20,7 @@ def get_current_ip(config):
 				return result.strip()
 		return results
 	except:
-		print "Validating IP failed"
+		logging.info("Validating IP failed")
 
 def validate_ip(test_ip):
 	parts = test_ip.strip().split(".")
@@ -52,16 +53,18 @@ def build_tunnel(queue, command, ip_address):
 	except TimeoutException:
 		queue.put(True)
 		return
+	except KeyboardInterrupt:
+		queue.put(False)
 	queue.put(False)
 
 def run_rotation(config, connect, failures):
-	print "Starting at: %s" % (datetime.datetime.now())
-	print "Current ip: %s" % config['data']['base_ip']
+	logging.info("Starting")
+	logging.info("Current ip: %s" % config['data']['base_ip'])
 	while True:
 		queue = Queue()
 		ip = select_ip(config)
 		start = time.time()
-		print "Connecting to %s" % ip
+		logging.info("Connecting to %s" % ip)
 		p = multiprocessing.Process(target=build_tunnel, args=(
 			queue, config['start_vpn'], ip))
 		p.start()
@@ -74,10 +77,9 @@ def run_rotation(config, connect, failures):
 					while time.time() - start < run_tunnel.timeout:
 						time.sleep(1)
 				else:
-					print "VPN exiting"
-					time.sleep(3)
-					kill_vpn(config)
+					logging.info("VPN exiting")
 					p.terminate()
+					kill_vpn(config)
 					running = False
 					time.sleep(10)
 			except Empty:
@@ -86,19 +88,20 @@ def run_rotation(config, connect, failures):
 					config['data']['current_ip'] = new_ip
 					if new_ip != config['data']['base_ip']:
 						failure_count = 0
-						print "Connected to %s" % new_ip
+						logging.info("Connected to %s" % new_ip)
 					else:
 						failure_count += 1
-						print "Not connected, seeing base IP (Attempt %s)" % failure_count
+						logging.info("Not connected, seeing base IP (Attempt %s)" % failure_count)
 				else:
 					failure_count += 1
 				if failure_count >= failures:
 					config['data']['bad_ips'].add(ip)
-					print "Connection failed (timeout).  Killing vpn"
+					logging.info("Connection failed (timeout).  Killing vpn")
 					p.terminate()
-					time.sleep(3)
 					kill_vpn(config)
 					running = False
+			except Exception, e:
+				logging.error(e)
 
 def kill_vpn(config):
 	eval(config['kill_vpn'])
@@ -108,7 +111,7 @@ def rotate_my_shizzle(config, connect, failures):
 	data['ips'] = set(get_ip_list(config))
 	data['base_ip'] = get_current_ip(config)
 	if data['base_ip'] == None:
-		print "Failed to get ip at start, exiting"
+		logging.error("Failed to get ip at start, exiting")
 		sys.exit(1)
 	data['current_ip'] = data['base_ip']
 	data['bad_ips'] = set()
@@ -125,16 +128,34 @@ def select_ip(config):
 		leftlist = config['data']['ips']
 	return random.choice(leftlist)
 
+def configure_logging(options):
+	valid_loglevels = ('DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL',)
+	if options.loglevel.upper() not in valid_loglevels:
+		raise ValueError, 'The loglevel option must be one of {0}'.format(valid_loglevels)
+	else:
+		log_level = getattr(logging, options.loglevel.upper())
+
+	fmt = "%(asctime)s|%(levelname)s|%(message)s"
+	datefmt='%Y-%m-%dT%H:%M:%S'
+	if options.logfile.upper() in ('STDOUT', 'STDERR'):
+		log_stream = getattr(sys, options.logfile.lower())
+		logging.basicConfig(level=log_level, stream=log_stream, format=fmt, datefmt=datefmt)
+	else:
+		logging.basicConfig(level=log_level, filename=options.logfile)
+
 def main():
 	parser = option_parser()
 	(options, args) = parser.parse_args()
 	if not options.config:
 		sys.stderr.write("-c required\n")
 		sys.exit(1)
+	configure_logging(options)
 	config = yaml.load(file(options.config))
 	run_tunnel.timeout = options.timeout
 	try:
 		rotate_my_shizzle(config, options.connect, options.failures)
+	except KeyboardInterrupt:
+		pass
 	finally:
 		try:
 			kill_vpn(config)
@@ -142,7 +163,7 @@ def main():
 			pass
 
 def option_parser():
-	usage = "usage: %prog v0.9.0 [options] [CNAME]"
+	usage = "usage: %prog v0.9.1 [options] [CNAME]"
 	description = "Rotates your ip address based on config"
 	parser = OptionParser(usage=usage, description=description)
 	parser.add_option(
@@ -157,6 +178,14 @@ def option_parser():
 	parser.add_option(
 		"-c", "--config", dest="config",
 		help="config file (Required)")
+	parser.add_option(
+		"--logfile", dest="logfile", default="stdout",
+		type="str", help=" ".join(('The file to log to, or "stdout" or "stderr"',
+			'to log to those special file descriptors.',)))
+	parser.add_option(
+		"--loglevel", dest="loglevel", default="info",
+		type="str", help=" ".join(('The level to log at.',
+			'Valid levels are: debug, info, warning, error, and critical.',)))
 	return parser
 
 if (__name__ == "__main__"):
